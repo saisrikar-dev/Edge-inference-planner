@@ -1,6 +1,6 @@
 {
   "name": "mobile_vision_stack",
-  "description": "A mobile vision pipeline with a multimodal fusion block and tight energy limits.",
+  "description": "A mobile vision pipeline with a multimodal fusion block and tight energy limits. ",
   "devices": [
     {
       "name": "cpu",
