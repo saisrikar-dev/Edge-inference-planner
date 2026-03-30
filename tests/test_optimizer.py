@@ -155,3 +155,126 @@ def test_cli_json_output(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert '"pipeline_name": "cli_smoke"' in captured.out
+
+
+def test_cli_csv_output_to_file(tmp_path, capsys) -> None:
+    scenario_path = tmp_path / "scenario.json"
+    output_path = tmp_path / "exports" / "plan.csv"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "name": "csv_export",
+                "devices": [
+                    {"name": "cpu", "memory_mb": 1024},
+                    {"name": "gpu", "memory_mb": 1024},
+                ],
+                "links": [
+                    {
+                        "source": "cpu",
+                        "target": "gpu",
+                        "latency_ms_per_mb": 0.01,
+                        "energy_mj_per_mb": 0.01,
+                    }
+                ],
+                "stages": [
+                    {
+                        "name": "stage_a",
+                        "output_mb": 1,
+                        "profiles": {
+                            "cpu": {"latency_ms": 2.0, "energy_mj": 1.5, "memory_mb": 50},
+                            "gpu": {"latency_ms": 1.0, "energy_mj": 1.8, "memory_mb": 70},
+                        },
+                    },
+                    {
+                        "name": "stage_b",
+                        "output_mb": 0,
+                        "profiles": {
+                            "cpu": {"latency_ms": 1.5, "energy_mj": 1.1, "memory_mb": 20},
+                            "gpu": {"latency_ms": 0.8, "energy_mj": 1.0, "memory_mb": 30},
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "plan",
+            str(scenario_path),
+            "--format",
+            "csv",
+            "--output",
+            str(output_path),
+            "--top-k",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert output_path.exists()
+    content = output_path.read_text(encoding="utf-8")
+    assert "rank,pipeline_name,goal,strategy,total_score" in content
+    assert "csv_export" in content
+    assert "stage_a" in content
+    assert "\n\n" not in content
+    assert f"Wrote csv report to {output_path}" in captured.out
+
+
+def test_cli_html_output_to_file(tmp_path, capsys) -> None:
+    scenario_path = tmp_path / "scenario.json"
+    output_path = tmp_path / "plan.html"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "name": "html_export",
+                "devices": [
+                    {"name": "cpu", "memory_mb": 1024},
+                    {"name": "gpu", "memory_mb": 1024},
+                ],
+                "links": [
+                    {
+                        "source": "cpu",
+                        "target": "gpu",
+                        "latency_ms_per_mb": 0.01,
+                        "energy_mj_per_mb": 0.01,
+                    }
+                ],
+                "stages": [
+                    {
+                        "name": "stage_a",
+                        "output_mb": 0,
+                        "profiles": {
+                            "cpu": {"latency_ms": 2.0, "energy_mj": 1.5, "memory_mb": 50},
+                            "gpu": {"latency_ms": 1.0, "energy_mj": 1.8, "memory_mb": 70},
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "plan",
+            str(scenario_path),
+            "--format",
+            "html",
+            "--output",
+            str(output_path),
+            "--top-k",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert output_path.exists()
+    content = output_path.read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in content
+    assert "Edge Inference Planner Report - html_export" in content
+    assert "<table>" in content
+    assert f"Wrote html report to {output_path}" in captured.out

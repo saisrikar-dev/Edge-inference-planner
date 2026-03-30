@@ -51,6 +51,13 @@ pip install -e .[dev]
 edge-inference-planner plan scenarios/mobile_vision_pipeline.json --goal balanced --top-k 3
 ```
 
+### 4. Export reports
+
+```bash
+edge-inference-planner plan scenarios/mobile_vision_pipeline.json --format csv --output reports/mobile_vision.csv
+edge-inference-planner plan scenarios/mobile_vision_pipeline.json --format html --output reports/mobile_vision.html
+```
+
 ## Example Output
 
 ```text
@@ -129,7 +136,6 @@ Edge Inference Planner/
 ## Roadmap
 
 - Add DAG support for non-linear pipelines
-- Export results to CSV and HTML
 - Add thermal throttling models and quantization knobs
 - Plug in measured hardware benchmarks instead of hand-authored scenario profiles
 
