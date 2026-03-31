@@ -19,6 +19,12 @@ class OptimizerConfig:
     beam_width: int = 128
     exact_search_limit: int = 100_000
 
+    def __post_init__(self) -> None:
+        if self.beam_width <= 0:
+            raise ValueError("beam_width must be greater than zero.")
+        if self.exact_search_limit <= 0:
+            raise ValueError("exact_search_limit must be greater than zero.")
+
 
 @dataclass(frozen=True)
 class _Normalizers:
@@ -49,6 +55,10 @@ class EdgeInferenceOptimizer:
         self.config = config or OptimizerConfig()
 
     def optimize(self, pipeline: PipelineSpec, goal: str = "balanced", top_k: int = 3) -> list[PlanResult]:
+        if not pipeline.devices:
+            raise ValueError("Pipeline must define at least one device.")
+        if not pipeline.stages:
+            raise ValueError("Pipeline must define at least one stage.")
         if goal not in GOAL_PRESETS:
             supported = ", ".join(sorted(GOAL_PRESETS))
             raise ValueError(f"Unsupported goal {goal!r}. Supported goals: {supported}.")
@@ -153,11 +163,15 @@ class EdgeInferenceOptimizer:
                 transfer_latency_ms, transfer_energy_mj = 0.0, 0.0
                 did_switch = prev_device is not None and prev_device != device_name
                 if did_switch:
-                    transfer_latency_ms, transfer_energy_mj = pipeline.transfer_cost(
+                    transfer_cost = self._transfer_cost_or_none(
                         prev_device,
                         device_name,
                         previous_output_mb,
+                        pipeline,
                     )
+                    if transfer_cost is None:
+                        continue
+                    transfer_latency_ms, transfer_energy_mj = transfer_cost
 
                 new_total_latency_ms = total_latency_ms + transfer_latency_ms + profile.latency_ms
                 new_total_energy_mj = total_energy_mj + transfer_energy_mj + profile.energy_mj
@@ -232,11 +246,15 @@ class EdgeInferenceOptimizer:
                     transfer_latency_ms, transfer_energy_mj = 0.0, 0.0
                     did_switch = state.prev_device is not None and state.prev_device != device_name
                     if did_switch:
-                        transfer_latency_ms, transfer_energy_mj = pipeline.transfer_cost(
+                        transfer_cost = self._transfer_cost_or_none(
                             state.prev_device,
                             device_name,
                             previous_output_mb,
+                            pipeline,
                         )
+                        if transfer_cost is None:
+                            continue
+                        transfer_latency_ms, transfer_energy_mj = transfer_cost
 
                     total_latency_ms = state.total_latency_ms + transfer_latency_ms + profile.latency_ms
                     total_energy_mj = state.total_energy_mj + transfer_energy_mj + profile.energy_mj
@@ -324,6 +342,21 @@ class EdgeInferenceOptimizer:
         for stage in pipeline.stages:
             total *= len(stage.profiles)
         return total
+
+    def _transfer_cost_or_none(
+        self,
+        source: str,
+        target: str,
+        data_mb: float,
+        pipeline: PipelineSpec,
+    ) -> tuple[float, float] | None:
+        if source == target or data_mb <= 0:
+            return 0.0, 0.0
+
+        link = pipeline.transfer_links.get((source, target))
+        if link is None:
+            return None
+        return link.cost_for(data_mb)
 
     def _score(
         self,

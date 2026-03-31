@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from edge_inference_planner.cli import main
-from edge_inference_planner.optimizer import EdgeInferenceOptimizer
+from edge_inference_planner.optimizer import EdgeInferenceOptimizer, OptimizerConfig
 from edge_inference_planner.scenario import load_pipeline, pipeline_from_dict
 
 
@@ -115,6 +117,104 @@ def test_memory_constraints_force_work_off_small_npu() -> None:
 
     assert result.memory_by_device["npu"] <= 700
     assert [placement.device_name for placement in result.assignments] != ["npu", "npu"]
+
+
+def test_missing_transfer_link_is_treated_as_infeasible_branch() -> None:
+    pipeline = pipeline_from_dict(
+        {
+            "name": "sparse_links",
+            "devices": [
+                {"name": "cpu", "memory_mb": 2048},
+                {"name": "gpu", "memory_mb": 2048},
+                {"name": "npu", "memory_mb": 2048},
+            ],
+            "links": [
+                {"source": "cpu", "target": "npu", "latency_ms_per_mb": 0.05, "energy_mj_per_mb": 0.02},
+            ],
+            "stages": [
+                {
+                    "name": "preprocess",
+                    "output_mb": 8,
+                    "profiles": {
+                        "cpu": {"latency_ms": 4.0, "energy_mj": 2.5, "memory_mb": 100},
+                        "gpu": {"latency_ms": 1.0, "energy_mj": 4.5, "memory_mb": 160},
+                    },
+                },
+                {
+                    "name": "infer",
+                    "output_mb": 0,
+                    "profiles": {
+                        "npu": {"latency_ms": 2.0, "energy_mj": 1.0, "memory_mb": 220},
+                    },
+                },
+            ],
+        }
+    )
+
+    result = EdgeInferenceOptimizer().optimize(pipeline, goal="balanced", top_k=1)[0]
+
+    assert [placement.device_name for placement in result.assignments] == ["cpu", "npu"]
+
+
+@pytest.mark.parametrize(
+    ("config_kwargs", "message"),
+    [
+        ({"beam_width": 0}, "beam_width"),
+        ({"exact_search_limit": 0}, "exact_search_limit"),
+    ],
+)
+def test_optimizer_config_rejects_non_positive_search_settings(
+    config_kwargs: dict[str, int], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        OptimizerConfig(**config_kwargs)
+
+
+def test_pipeline_from_dict_rejects_duplicate_device_names() -> None:
+    with pytest.raises(ValueError, match="Duplicate device name 'cpu'"):
+        pipeline_from_dict(
+            {
+                "name": "duplicate_devices",
+                "devices": [
+                    {"name": "cpu", "memory_mb": 1024},
+                    {"name": "cpu", "memory_mb": 2048},
+                ],
+                "stages": [
+                    {
+                        "name": "stage_a",
+                        "profiles": {
+                            "cpu": {"latency_ms": 1.0, "energy_mj": 1.0, "memory_mb": 64},
+                        },
+                    }
+                ],
+            }
+        )
+
+
+def test_pipeline_from_dict_rejects_duplicate_stage_names() -> None:
+    with pytest.raises(ValueError, match="Duplicate stage name 'stage_a'"):
+        pipeline_from_dict(
+            {
+                "name": "duplicate_stages",
+                "devices": [
+                    {"name": "cpu", "memory_mb": 1024},
+                ],
+                "stages": [
+                    {
+                        "name": "stage_a",
+                        "profiles": {
+                            "cpu": {"latency_ms": 1.0, "energy_mj": 1.0, "memory_mb": 64},
+                        },
+                    },
+                    {
+                        "name": "stage_a",
+                        "profiles": {
+                            "cpu": {"latency_ms": 2.0, "energy_mj": 2.0, "memory_mb": 64},
+                        },
+                    },
+                ],
+            }
+        )
 
 
 def test_cli_json_output(tmp_path, capsys) -> None:
@@ -278,3 +378,14 @@ def test_cli_html_output_to_file(tmp_path, capsys) -> None:
     assert "Edge Inference Planner Report - html_export" in content
     assert "<table>" in content
     assert f"Wrote html report to {output_path}" in captured.out
+
+
+def test_cli_returns_clean_error_for_missing_scenario(tmp_path, capsys) -> None:
+    scenario_path = tmp_path / "missing.json"
+
+    exit_code = main(["plan", str(scenario_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error:" in captured.err
+    assert scenario_path.name in captured.err

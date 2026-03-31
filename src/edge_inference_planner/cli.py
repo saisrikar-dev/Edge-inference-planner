@@ -55,35 +55,42 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "plan":
-        optimizer = EdgeInferenceOptimizer(
-            OptimizerConfig(
-                beam_width=args.beam_width,
-                exact_search_limit=args.exact_search_limit,
+        try:
+            optimizer = EdgeInferenceOptimizer(
+                OptimizerConfig(
+                    beam_width=args.beam_width,
+                    exact_search_limit=args.exact_search_limit,
+                )
             )
-        )
-        pipeline = load_pipeline(args.scenario)
-        results = optimizer.optimize(pipeline, goal=args.goal, top_k=args.top_k)
-        if not results:
-            print("No feasible placement found under the current constraints.", file=sys.stderr)
+            pipeline = load_pipeline(args.scenario)
+            results = optimizer.optimize(pipeline, goal=args.goal, top_k=args.top_k)
+            if not results:
+                print(
+                    "No feasible placement found under the current constraints and transfer topology.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            if args.format == "json":
+                rendered = results_to_json(results)
+            elif args.format == "csv":
+                rendered = results_to_csv(results)
+            elif args.format == "html":
+                rendered = results_to_html(pipeline, results)
+            else:
+                rendered = render_results_text(pipeline, results)
+
+            if args.output:
+                output_path = Path(args.output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(rendered, encoding="utf-8")
+                print(f"Wrote {args.format} report to {output_path}")
+            else:
+                print(rendered)
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             return 1
-
-        if args.format == "json":
-            rendered = results_to_json(results)
-        elif args.format == "csv":
-            rendered = results_to_csv(results)
-        elif args.format == "html":
-            rendered = results_to_html(pipeline, results)
-        else:
-            rendered = render_results_text(pipeline, results)
-
-        if args.output:
-            output_path = Path(args.output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(rendered, encoding="utf-8")
-            print(f"Wrote {args.format} report to {output_path}")
-        else:
-            print(rendered)
-        return 0
 
     parser.print_help()
     return 1
